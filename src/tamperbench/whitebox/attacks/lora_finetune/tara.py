@@ -1,7 +1,9 @@
 """TaRA (PEFT) fine-tuning attack helpers, based on LoraFinetune interface."""
 
 from collections.abc import Callable
+from trl.trainer.sft_trainer import SFTTrainer
 import math
+import peft
 import torch
 
 def tara_factors(W0, sumx, sumg, r, s, c):
@@ -91,6 +93,7 @@ def collect_covariances(model: torch.nn.Module, batches: list[dict[str, torch.Te
         handles.append(layer.register_forward_hook(forward_hook(name)))
 
     was_training = model.training
+    # Note eval mode disables gradient checkpointing recompute
     model.eval()
 
     # Here accumulate the X^T X and G^T G matrices across the batches.
@@ -110,8 +113,71 @@ def collect_covariances(model: torch.nn.Module, batches: list[dict[str, torch.Te
     return result
 
 
-def apply_tara_init(trainer, rank, damping, calibration_size):
+def apply_tara_init(trainer: SFTTrainer, damping: float, calibration_size: int):
     """Applies appropriate weight initialization to trainer
 
     Args:
+        trainer:
+        damping:
+        calibration_size:
     """
+    # Note: to ensure the same torch random state is used for better comparison between LoRA and TaRA, 
+    # mark the state here and restore it at the end.
+    state = torch.get_rng_state()
+    cuda_state = (torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None)
+
+    try:
+        # 1. cal batches: small subset of mini-batches drawn from training data for LoRA matrices
+        batches = []
+        model = trainer.model
+        seen = 0
+        dataLoader = trainer.get_train_dataloader()
+        for raw_batch in dataLoader:
+            if seen >= calibration_size: break
+            batch = trainer._prepare_inputs(raw_batch)
+            batch_size = batch["input_ids"].shape[0]
+
+            # Caution: in case final batch overflows leftover space, trim it
+            remaining = calibration_size - seen
+            if batch_size > remaining:
+                batch = {k: v[:remaining] for k, v in batch.items()}
+                batch_size = remaining
+            batches.append(batch)
+            seen += batch_size
+
+        #2. Get the LoRA layers
+        lora_layers: list[tuple[str, peft.tuners.lora.Linear]] = []
+        for name, module in model.named_modules():
+            if isinstance(module, peft.tuners.lora.Linear):
+                lora_layers.append((name, module))
+
+        #3. Process all the layers in with some group size
+        # Concern: entire model + all LoRA layers may not fit on a smaller GPU at once.
+        group_size = 28 # Multiples of 7: each decoder block has 7 linear layers, so take 4 decoder blocks per group for processing
+        for i in range(0, len(lora_layers), group_size):
+            group = lora_layers[i:i + group_size]
+            covs = collect_covariances(model, batches, trainer.compute_loss, {name: m.base_layer for name, m in group})
+
+            with torch.no_grad():
+                # Do initialization
+                for name, m in group:
+                    r = m.r["default"]
+                    s = m.scaling["default"]
+                    W0 = m.base_layer.weight
+                    sx, sg = covs[name]
+
+                    B, A = tara_factors(W0, sx, sg, r, s, damping)
+
+                    # Copy over to the model
+                    m.lora_A["default"].weight.copy_(A.to(m.lora_A['default'].weight.dtype))
+                    m.lora_B["default"].weight.copy_(B.to(m.lora_B['default'].weight.dtype))
+                    m.base_layer.weight.copy_((W0.float() - s * B @ A).to(W0.dtype))
+
+            # evict this group from cache entirely 
+            del covs
+            torch.cuda.empty_cache()
+
+    finally:
+        torch.set_rng_state(state)
+        if cuda_state:
+            torch.cuda.set_rng_state_all(cuda_state)

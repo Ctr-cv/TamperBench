@@ -2,7 +2,7 @@
 
 import multiprocessing
 from dataclasses import dataclass, field
-from typing import TypeVar
+from typing import TypeVar, Literal
 
 import datasets
 import peft
@@ -21,6 +21,8 @@ from tamperbench.whitebox.attacks.full_parameter_finetune.full_parameter_finetun
     FullParameterFinetune,
     FullParameterFinetuneConfig,
 )
+
+from tamperbench.whitebox.attacks.lora_finetune.tara import apply_tara_init
 from tamperbench.whitebox.attacks.registry import register_attack
 from tamperbench.whitebox.utils.models.default_tokens import DEFAULT_PAD_TOKEN
 from tamperbench.whitebox.utils.names import AttackName
@@ -47,14 +49,21 @@ LLAMA_TARGET_MODULES = [
 @dataclass
 class LoraFinetuneConfig(FullParameterFinetuneConfig):
     """Hyper-parameters for a lora based fine-tuning attack.
+       Added new fields to allow initialization changes
 
     Attributes:
         lora_rank: LoRa rank.
         target_modules: List of module names to apply LoRA to. Defaults to Llama-style modules.
+        init_lora_Weights: PEFT default inits to True. "tara" -> TaRA
+        tara_calibration_size: config for TaRA cal size, defaults to 256
+        tara_damping: config for TaRA damping factor, defaults to 0.01
     """
 
     lora_rank: int = field(kw_only=True)
     target_modules: list[str] | None = field(default=None, kw_only=True)
+    init_lora_weights: bool | Literal["tara"] = field(default=True, kw_only=True)  
+    tara_calibration_size: int = field(default=256, kw_only=True)                  
+    tara_damping: float = field(default=1e-2, kw_only=True)  
 
 
 @register_attack(AttackName.LORA_FINETUNE, LoraFinetuneConfig)
@@ -163,6 +172,7 @@ def run_lora_attack(  # TODO: Consolidate with `run_full_finetune_attack`
             lora_alpha=LORA_ALPHA_MULTIPLIER * attack_config.lora_rank,
             target_modules=attack_config.target_modules or LLAMA_TARGET_MODULES,
             task_type="CAUSAL_LM",
+            init_lora_weights=True if attack_config.init_lora_weights == "tara" else attack_config.init_lora_weights
         ),
     )
 
@@ -172,6 +182,11 @@ def run_lora_attack(  # TODO: Consolidate with `run_full_finetune_attack`
         train_dataset=prompt_completions_dataset,
         args=training_arguments,
     )
+
+    if attack_config.init_lora_weights == "tara":
+        cal_size = attack_config.tara_calibration_size
+        damping = attack_config.tara_damping
+        apply_tara_init(trainer, damping, cal_size)
 
     trainer.train()
 

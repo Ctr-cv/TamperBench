@@ -179,6 +179,10 @@ cython_debug/
 # Results
 results/
 
+# Documentations
+TARA_PLAN.md
+TARA_RUN.md
+
 .claude
 
 # Local wandb results
