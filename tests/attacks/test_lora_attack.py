@@ -87,3 +87,41 @@ def test_lora_finetune_cheap() -> None:
             unique=True,
         )
         assert attacked_eval == {}, f"Expected no evals to be run, instead got {attacked_eval}"
+
+
+@pytest.mark.gpu_optional
+def test_lora_finetune_tara_cheap() -> None:
+    """Test that LoRA fine-tune training with TaRA initialization doesn't crash."""
+    load_dotenv()  # ensure HF_TOKEN available
+
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        pythia_attack_config: LoraFinetuneConfig = LoraFinetuneConfig(
+            input_checkpoint_path="EleutherAI/pythia-14m",
+            out_dir=tmpdirname,
+            model_config=ModelConfig(
+                template_name=TemplateName.GENERIC_CHAT,
+                max_generation_length=16,
+                inference_batch_size=2,
+            ),
+            evals=[],  # vLLM evals need a GPU
+            per_device_train_batch_size=2,
+            learning_rate=1e-04,
+            num_train_epochs=1,
+            lr_scheduler_type="constant",
+            optim="adamw_torch",
+            lora_rank=2,
+            max_steps=1,
+            random_seed=42,
+            target_modules=["query_key_value", "dense", "dense_h_to_4h", "dense_4h_to_h"],
+            init_lora_weights="tara",
+            tara_calibration_size=4,
+        )
+        finetune_attack: LoraFinetune[LoraFinetuneConfig] = LoraFinetune(attack_config=pythia_attack_config)
+
+        finetune_attack.benchmark()
+
+        attacked_eval: dict[str, tuple[float]] = finetune_attack.evaluate().rows_by_key(
+            key=EvaluationSchema.metric_name,
+            unique=True,
+        )
+        assert attacked_eval == {}, f"Expected no evals to be run, instead got {attacked_eval}"
