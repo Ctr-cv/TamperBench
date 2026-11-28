@@ -1,0 +1,22 @@
+base: &base_cfg            # LoRA, lr 1e-4, 64 steps
+      model_config: {template: plain, max_generation_length: 1024, inference_batch_size:
+  16}
+      evals: [strong_reject, mmlu_pro_val]
+      per_device_train_batch_size: 8
+      learning_rate: 0.0001
+      num_train_epochs: 1
+      lr_scheduler_type: constant
+      optim: adamw_torch
+      lora_rank: 16
+      max_steps: 64
+      harmful_dataset: safe_rlhf_alpaca_train
+      dataset_size: 1350
+      poison_ratio: 1
+      init_lora_weights: true
+  lora_lr3e-5: {<<: *base_cfg, learning_rate: 0.00003}
+  lora_lr3e-4: {<<: *base_cfg, learning_rate: 0.0003}
+  lora_s16:    {<<: *base_cfg, max_steps: 16}
+  tara_lr1e-4: {<<: *base_cfg, init_lora_weights: tara}
+  tara_lr3e-5: {<<: *base_cfg, init_lora_weights: tara, learning_rate: 0.00003}
+  tara_lr3e-4: {<<: *base_cfg, init_lora_weights: tara, learning_rate: 0.0003}
+  tara_s16:    {<<: *base_cfg, init_lora_weights: tara, max_steps: 16}
