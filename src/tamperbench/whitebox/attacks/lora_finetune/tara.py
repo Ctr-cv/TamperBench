@@ -188,7 +188,8 @@ def apply_tara_init(trainer: SFTTrainer, damping: float, calibration_size: int):
 
         # 3. Process all the layers in with some group size
         # Concern: entire model + all LoRA layers may not fit on a smaller GPU at once.
-        group_size = 28  # Multiples of 7: each decoder block has 7 linear layers, so take 4 decoder blocks per group for processing
+        # Multiples of 7: each decoder block has 7 linear layers, so take 4 decoder blocks per group for processing
+        group_size = 56  # In colab, setting 56 took ~15GB peak memory on a L4 which still leaves sufficient room.
         for i in range(0, len(lora_layers), group_size):
             group = lora_layers[i : i + group_size]
             covs = collect_covariances(model, batches, trainer.compute_loss, {name: m.base_layer for name, m in group})
