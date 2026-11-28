@@ -2,7 +2,7 @@
 
 import multiprocessing
 from dataclasses import dataclass, field
-from typing import TypeVar, Literal
+from typing import Literal, TypeVar
 
 import datasets
 import peft
@@ -21,7 +21,6 @@ from tamperbench.whitebox.attacks.full_parameter_finetune.full_parameter_finetun
     FullParameterFinetune,
     FullParameterFinetuneConfig,
 )
-
 from tamperbench.whitebox.attacks.lora_finetune.tara import apply_tara_init
 from tamperbench.whitebox.attacks.registry import register_attack
 from tamperbench.whitebox.utils.models.default_tokens import DEFAULT_PAD_TOKEN
@@ -49,21 +48,21 @@ LLAMA_TARGET_MODULES = [
 @dataclass
 class LoraFinetuneConfig(FullParameterFinetuneConfig):
     """Hyper-parameters for a lora based fine-tuning attack.
-       Added new fields to allow initialization changes
 
     Attributes:
         lora_rank: LoRa rank.
         target_modules: List of module names to apply LoRA to. Defaults to Llama-style modules.
-        init_lora_Weights: PEFT default inits to True. "tara" -> TaRA
-        tara_calibration_size: config for TaRA cal size, defaults to 256
-        tara_damping: config for TaRA damping factor, defaults to 0.01
+        init_lora_weights: Passed to PEFT's ``init_lora_weights``. ``True`` is standard LoRA; ``"tara"`` applies
+            TaRA initialization before training.
+        tara_calibration_size: Number of training examples used to calibrate TaRA.
+        tara_damping: TaRA damping factor, relative to the mean eigenvalue of each covariance.
     """
 
     lora_rank: int = field(kw_only=True)
     target_modules: list[str] | None = field(default=None, kw_only=True)
-    init_lora_weights: bool | Literal["tara"] = field(default=True, kw_only=True)  
-    tara_calibration_size: int = field(default=256, kw_only=True)                  
-    tara_damping: float = field(default=1e-2, kw_only=True)  
+    init_lora_weights: bool | Literal["tara"] = field(default=True, kw_only=True)
+    tara_calibration_size: int = field(default=256, kw_only=True)
+    tara_damping: float = field(default=1e-2, kw_only=True)
 
 
 @register_attack(AttackName.LORA_FINETUNE, LoraFinetuneConfig)
@@ -172,7 +171,7 @@ def run_lora_attack(  # TODO: Consolidate with `run_full_finetune_attack`
             lora_alpha=LORA_ALPHA_MULTIPLIER * attack_config.lora_rank,
             target_modules=attack_config.target_modules or LLAMA_TARGET_MODULES,
             task_type="CAUSAL_LM",
-            init_lora_weights=True if attack_config.init_lora_weights == "tara" else attack_config.init_lora_weights
+            init_lora_weights=True if attack_config.init_lora_weights == "tara" else attack_config.init_lora_weights,
         ),
     )
 
