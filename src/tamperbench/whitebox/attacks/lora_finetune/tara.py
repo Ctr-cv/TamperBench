@@ -125,10 +125,16 @@ def collect_covariances(
 
     # Here accumulate the X^T X and G^T G matrices across the batches.
     try:
+        # The microbatch here is to reduce GPU memory consumption. Run each batch as a smaller piece to use only a fraction of activ mem.
+        micro_batch_size = 2 
         for batch in batches:
-            state["mask"] = batch["attention_mask"].bool()
-            loss = compute_loss(model, batch)
-            loss.backward()
+            for i in range(0, batch["input_ids"].shape[0], micro_batch_size):
+                mb = {k: v[i:i + micro_batch_size] for k, v in batch.items()}
+                n_tokens = (mb["labels"][:, 1:] != -100).sum()  # tokens the loss averages over (labels are shifted)
+                if n_tokens == 0:
+                    continue  # mean over zero tokens is NaN
+                state["mask"] = mb["attention_mask"].bool()
+                (compute_loss(model, mb) * n_tokens).backward()
     finally:
         for handle in handles:
             handle.remove()
